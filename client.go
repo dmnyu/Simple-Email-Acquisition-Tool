@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
+	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
 	"gopkg.in/yaml.v2"
 	"io"
@@ -141,7 +142,6 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 		return err
 	}
 
-	writer.WriteString("\n")
 	writer.WriteString(fmt.Sprintf("From %s %s\n", mr.Header.Get("from"), mr.Header.Get("date")))
 	writer.Flush()
 
@@ -161,27 +161,36 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 		}
 
 		switch h := p.Header.(type) {
+		//handle inline headers
 		case *mail.InlineHeader:
 			hf := h.Fields()
-			for hf.Next() {
-				writer.WriteString(fmt.Sprintf("%s: %s\n", hf.Key(), hf.Value()))
-				writer.Flush()
-			}
-		}
-
-		ct := p.Header.Get("Content-Type")
-		if plaintext.MatchString(ct) == true {
+			printHeaders(hf, writer)
 			b, err := ioutil.ReadAll(p.Body)
 			if err != nil {
 				return err
 			}
-			writer.WriteString("\n")
+			writer.WriteString("\n\n")
 			writer.Write(b)
-			writer.WriteString("\n")
+			writer.Flush()
+		//handle attachments
+		case *mail.AttachmentHeader:
+			printHeaders(h.Fields(), writer)
+
+			writer.WriteString("/*---- CONTENT HERE ____*/")
+			writer.WriteString("\n\n")
 			writer.Flush()
 		}
-
 	}
 
 	return nil
+}
+
+func printHeaders(hf message.HeaderFields, writer *bufio.Writer) {
+
+	for hf.Next() {
+		writer.WriteString(fmt.Sprintf("%s: %s\n", hf.Key(), hf.Value()))
+		writer.Flush()
+	}
+	writer.WriteString("\n")
+
 }

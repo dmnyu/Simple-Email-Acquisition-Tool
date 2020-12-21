@@ -1,13 +1,19 @@
 package go_email
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
+	"github.com/emersion/go-message/mail"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
+	"os"
+	"regexp"
 )
+
+var plaintext = regexp.MustCompile("text/plain")
 
 type EmailAccount struct {
 	Account  string `yaml:"account"`
@@ -16,9 +22,14 @@ type EmailAccount struct {
 	Port     string `yaml:"port"`
 }
 
+type Email struct {
+	Message *imap.Message
+	Section *imap.BodySectionName
+}
+
 func GetCreds(account string) (EmailAccount, error) {
 	credsMap := map[string]EmailAccount{}
-	source, err := ioutil.ReadFile("go-email.yml")
+	source, err := ioutil.ReadFile("/etc/go-email.yml")
 	if err != nil {
 		return EmailAccount{}, err
 	}
@@ -37,8 +48,13 @@ func GetCreds(account string) (EmailAccount, error) {
 	return EmailAccount{}, fmt.Errorf("Credentials file did not contain %s\n", account)
 }
 
-func GetClient(account EmailAccount) (*client.Client, error) {
+func GetClient(accountName string) (*client.Client, error) {
 	log.Println("Connecting to server...")
+
+	account, err := GetCreds(accountName)
+	if err != nil {
+		return nil, err
+	}
 
 	// Connect to server
 	addr := fmt.Sprintf(account.Server + ":" + account.Port)
@@ -78,10 +94,34 @@ func GetMailbox(c *client.Client, name string) (*imap.MailboxStatus, error) {
 	return mailbox, nil
 }
 
-func GetMessage(i int, c *client.Client) (chan *imap.Message, error) {
+func GetMessage(i uint32, c *client.Client) (Email, error) {
 	seqset := new(imap.SeqSet)
-	seqset.AddNum(uint32(i))
+	seqset.AddNum(i)
+	done := make(chan error, 1)
+
+	var section imap.BodySectionName
+	items := []imap.FetchItem{section.FetchItem()}
+
 	messages := make(chan *imap.Message, 1)
+
+	go func() {
+		done <- c.Fetch(seqset, items, messages)
+	}()
+
+	if err := <-done; err != nil {
+		return Email{}, nil
+	}
+
+	msg := <-messages
+
+	return Email{msg, &section}, nil
+}
+
+func GetMessages(from uint32, to uint32, c *client.Client) (chan *imap.Message, error) {
+
+	seqset := new(imap.SeqSet)
+	seqset.AddRange(from, to)
+	messages := make(chan *imap.Message, to)
 	done := make(chan error, 1)
 	go func() {
 		done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope}, messages)
@@ -92,4 +132,52 @@ func GetMessage(i int, c *client.Client) (chan *imap.Message, error) {
 	}
 
 	return messages, nil
+}
+
+func PrintMessage(email Email) error {
+	r := email.Message.GetBody(email.Section)
+	mr, err := mail.CreateReader(r)
+	if err != nil {
+		return err
+	}
+
+	outputfile, err := os.Create("test.mbox")
+	if err != nil {
+		return err
+	}
+	defer outputfile.Close()
+
+	writer := bufio.NewWriter(outputfile)
+
+	writer.WriteString("\n")
+	writer.WriteString(fmt.Sprintf("From %s %s\n", mr.Header.Get("from"), mr.Header.Get("date")))
+	writer.Flush()
+
+	fields := mr.Header.Fields()
+	for fields.Next() {
+		writer.WriteString(fmt.Sprintf("%s: %v\n", fields.Key(), fields.Value()))
+		writer.Flush()
+	}
+	writer.WriteString("\n")
+	for {
+
+		p, err := mr.NextPart()
+		if err != nil {
+			return err
+		}
+		ct := p.Header.Get("Content-Type")
+
+		if plaintext.MatchString(ct) == true {
+			b, err := ioutil.ReadAll(p.Body)
+			if err != nil {
+				return err
+			}
+			writer.Write(b)
+			writer.WriteString("\n")
+			writer.Flush()
+		}
+
+	}
+
+	return nil
 }

@@ -1,9 +1,9 @@
 package go_email
 
 import (
+	"flag"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
-	"log"
 	"testing"
 )
 
@@ -13,6 +13,9 @@ func TestClient(t *testing.T) {
 	var imapClient *client.Client
 	var mailbox *imap.MailboxStatus
 	var name string
+	var email Email
+
+	flag.Parse()
 
 	t.Run("Test Parsing Account Config", func(t *testing.T) {
 		account, err = GetCreds("don")
@@ -24,7 +27,7 @@ func TestClient(t *testing.T) {
 	})
 
 	t.Run("Test Get Client", func(t *testing.T) {
-		imapClient, err = GetClient(account)
+		imapClient, err = GetClient("don")
 		if err != nil {
 			t.Error(err)
 		}
@@ -66,13 +69,43 @@ func TestClient(t *testing.T) {
 	})
 
 	t.Run("Test Get A Message", func(t *testing.T) {
-		messages, err := GetMessage(1, imapClient)
+
+		email, err = GetMessage(mailbox.Messages, imapClient)
 		if err != nil {
 			t.Error(err)
 		}
-		for message := range messages {
-			log.Println(message.Envelope.Subject)
+
+		t.Log(email)
+	})
+
+	t.Run("Test print an email message", func(t *testing.T) {
+		err := PrintMessage(email)
+		if err != nil {
+			t.Log(err)
 		}
+	})
+
+	t.Run("Test Get Messages", func(t *testing.T) {
+		mailbox, err = GetMailbox(imapClient, name)
+		if err != nil {
+			t.Error(err)
+		}
+
+		from := uint32(1)
+		to := mailbox.Messages
+		if mailbox.Messages > 10 {
+			from = mailbox.Messages - 10
+		}
+
+		messages, err := GetMessages(from, to, imapClient)
+		if err != nil {
+			t.Error(err)
+		}
+
+		for msg := range messages {
+			t.Log(msg.SeqNum, msg.Envelope.Subject)
+		}
+
 	})
 
 	t.Run("Test Server Logout", func(t *testing.T) {

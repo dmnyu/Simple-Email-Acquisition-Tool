@@ -7,9 +7,9 @@ import (
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/mail"
 	"gopkg.in/yaml.v2"
+	"io"
 	"io/ioutil"
 	"log"
-	"os"
 	"regexp"
 )
 
@@ -134,20 +134,12 @@ func GetMessages(from uint32, to uint32, c *client.Client) (chan *imap.Message, 
 	return messages, nil
 }
 
-func PrintMessage(email Email) error {
+func WriteMessage(writer *bufio.Writer, email Email) error {
 	r := email.Message.GetBody(email.Section)
 	mr, err := mail.CreateReader(r)
 	if err != nil {
 		return err
 	}
-
-	outputfile, err := os.Create("test.mbox")
-	if err != nil {
-		return err
-	}
-	defer outputfile.Close()
-
-	writer := bufio.NewWriter(outputfile)
 
 	writer.WriteString("\n")
 	writer.WriteString(fmt.Sprintf("From %s %s\n", mr.Header.Get("from"), mr.Header.Get("date")))
@@ -162,16 +154,28 @@ func PrintMessage(email Email) error {
 	for {
 
 		p, err := mr.NextPart()
-		if err != nil {
+		if err == io.EOF {
+			break
+		} else if err != nil {
 			return err
 		}
-		ct := p.Header.Get("Content-Type")
 
+		switch h := p.Header.(type) {
+		case *mail.InlineHeader:
+			hf := h.Fields()
+			for hf.Next() {
+				writer.WriteString(fmt.Sprintf("%s: %s\n", hf.Key(), hf.Value()))
+				writer.Flush()
+			}
+		}
+
+		ct := p.Header.Get("Content-Type")
 		if plaintext.MatchString(ct) == true {
 			b, err := ioutil.ReadAll(p.Body)
 			if err != nil {
 				return err
 			}
+			writer.WriteString("\n")
 			writer.Write(b)
 			writer.WriteString("\n")
 			writer.Flush()

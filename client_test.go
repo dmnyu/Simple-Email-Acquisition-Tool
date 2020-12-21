@@ -1,9 +1,11 @@
 package go_email
 
 import (
+	"bufio"
 	"flag"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
+	"os"
 	"testing"
 )
 
@@ -79,9 +81,15 @@ func TestClient(t *testing.T) {
 	})
 
 	t.Run("Test print an email message", func(t *testing.T) {
-		err := PrintMessage(email)
+		outfile, err := os.Create(mailbox.Name + ".mbox")
 		if err != nil {
-			t.Log(err)
+			t.Error(err)
+		}
+		defer outfile.Close()
+		writer := bufio.NewWriter(outfile)
+		err = WriteMessage(writer, email)
+		if err != nil {
+			t.Error(err)
 		}
 	})
 

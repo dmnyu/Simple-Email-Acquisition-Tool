@@ -221,7 +221,7 @@ func PrintBody(s string, writer *bufio.Writer) {
 				writer.WriteString(c + "=\r\n")
 			}
 		} else {
-			writer.WriteString(line)
+			writer.WriteString(line + "\r\n")
 		}
 	}
 }

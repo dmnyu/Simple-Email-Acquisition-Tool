@@ -2,6 +2,7 @@ package go_email
 
 import (
 	"bufio"
+	b64 "encoding/base64"
 	"fmt"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
@@ -12,6 +13,7 @@ import (
 	"io/ioutil"
 	"log"
 	"regexp"
+	"strings"
 )
 
 var plaintext = regexp.MustCompile("text/plain")
@@ -142,15 +144,24 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 		return err
 	}
 
-	writer.WriteString(fmt.Sprintf("From %s %s\n", mr.Header.Get("from"), mr.Header.Get("date")))
+	writer.WriteString(fmt.Sprintf("From %s %s\r\n", mr.Header.Get("from"), mr.Header.Get("date")))
 	writer.Flush()
 
 	fields := mr.Header.Fields()
+
+	//Message Headers
+	var boundaryCode string
 	for fields.Next() {
-		writer.WriteString(fmt.Sprintf("%s: %v\n", fields.Key(), fields.Value()))
+		bc := CheckBoundary(fields.Value())
+		if bc != "" {
+			boundaryCode = bc
+		}
+		values := strings.ReplaceAll(fields.Value(), ";", ";\r\n       ")
+		writer.WriteString(fmt.Sprintf("%s: %v\r\n", fields.Key(), values))
 		writer.Flush()
+
 	}
-	writer.WriteString("\n")
+	writer.WriteString("\r\n")
 	for {
 
 		p, err := mr.NextPart()
@@ -164,33 +175,95 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 		//handle inline headers
 		case *mail.InlineHeader:
 			hf := h.Fields()
-			printHeaders(hf, writer)
+			printHeaders(boundaryCode, hf, writer)
 			b, err := ioutil.ReadAll(p.Body)
 			if err != nil {
 				return err
 			}
-			writer.WriteString("\n\n")
-			writer.Write(b)
+			PrintBody(string(b), writer)
+			writer.WriteString("\n")
 			writer.Flush()
 		//handle attachments
 		case *mail.AttachmentHeader:
-			printHeaders(h.Fields(), writer)
+			printHeaders(boundaryCode, h.Fields(), writer)
 
-			writer.WriteString("/*---- CONTENT HERE ____*/")
-			writer.WriteString("\n\n")
-			writer.Flush()
+			b, err := ioutil.ReadAll(p.Body)
+			if err != nil {
+				return err
+			}
+
+			if p.Header.Get("Content-transfer-Encoding") == "base64" {
+				printBase64Encoding(b, writer)
+			}
 		}
 	}
 
 	return nil
 }
 
-func printHeaders(hf message.HeaderFields, writer *bufio.Writer) {
-
+func printHeaders(bc string, hf message.HeaderFields, writer *bufio.Writer) {
+	log.Println("BC", bc)
+	writer.WriteString(bc + "\r\n")
+	writer.Flush()
 	for hf.Next() {
-		writer.WriteString(fmt.Sprintf("%s: %s\n", hf.Key(), hf.Value()))
+		writer.WriteString(fmt.Sprintf("%s: %s\r\n", hf.Key(), hf.Value()))
 		writer.Flush()
 	}
-	writer.WriteString("\n")
+	writer.WriteString("\r\n")
+	writer.Flush()
+}
 
+func PrintBody(s string, writer *bufio.Writer) {
+	lines := strings.Split(s, "\r\n")
+	for _, line := range lines {
+		if len(line) > 76 {
+			for _, c := range chunk(line, 75) {
+				writer.WriteString(c + "=\r\n")
+			}
+		} else {
+			writer.WriteString(line)
+		}
+	}
+}
+
+func chunk(s string, chunkSize int) []string {
+	if chunkSize >= len(s) {
+		return []string{s}
+	}
+	var chunks []string
+	chunk := make([]rune, chunkSize)
+	len := 0
+	for _, r := range s {
+		chunk[len] = r
+		len++
+		if len == chunkSize {
+			chunks = append(chunks, string(chunk))
+			len = 0
+		}
+	}
+	if len > 0 {
+		chunks = append(chunks, string(chunk[:len]))
+	}
+	return chunks
+}
+
+func printBase64Encoding(b []byte, writer *bufio.Writer) {
+	sEnc := b64.StdEncoding.EncodeToString(b)
+	chunks := chunk(sEnc, 76)
+	for _, chunk := range chunks {
+		writer.WriteString(chunk)
+		writer.WriteString("\n")
+		writer.Flush()
+	}
+}
+
+func CheckBoundary(s string) string {
+	b := regexp.MustCompile("boundary")
+	if b.MatchString(s) == true {
+		runes := []rune(s)
+		s2 := "--" + string(runes[27:len(s)-1])
+		return string(s2)
+	} else {
+		return ""
+	}
 }

@@ -217,7 +217,8 @@ func writePartHeaders(bc string, hf message.HeaderFields, writer *bufio.Writer) 
 	writer.WriteString("\r\n" + bc + "\r\n")
 	writer.Flush()
 	for hf.Next() {
-		writer.WriteString(fmt.Sprintf("%s: %s\r\n", hf.Key(), hf.Value()))
+		value := strings.ReplaceAll(hf.Value(), ";", ";\r\n ")
+		writer.WriteString(fmt.Sprintf("%s: %s\r\n", hf.Key(), value))
 		writer.Flush()
 	}
 	writer.WriteString("\r\n")

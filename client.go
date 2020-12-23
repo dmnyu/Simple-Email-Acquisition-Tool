@@ -147,21 +147,12 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 	writer.WriteString(fmt.Sprintf("From %s %s\r\n", mr.Header.Get("from"), mr.Header.Get("date")))
 	writer.Flush()
 
-	fields := mr.Header.Fields()
-
 	//Message Headers
-	var boundaryCode string
-	for fields.Next() {
-		bc := CheckBoundary(fields.Value())
-		if bc != "" {
-			boundaryCode = bc
-		}
-		values := strings.ReplaceAll(fields.Value(), ";", ";\r\n       ")
-		writer.WriteString(fmt.Sprintf("%s: %v\r\n", fields.Key(), values))
-		writer.Flush()
-
+	boundaryCode, err := writeMessageHeaders(mr.Header.Fields(), writer)
+	if err != nil {
+		return err
 	}
-	writer.WriteString("\r\n")
+
 	for {
 
 		p, err := mr.NextPart()
@@ -175,17 +166,16 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 		//handle inline headers
 		case *mail.InlineHeader:
 			hf := h.Fields()
-			printHeaders(boundaryCode, hf, writer)
+			writePartHeaders(boundaryCode, hf, writer)
 			b, err := ioutil.ReadAll(p.Body)
 			if err != nil {
 				return err
 			}
-			PrintBody(string(b), writer)
-			writer.WriteString("\n")
+			writeBody(string(b), writer)
 			writer.Flush()
 		//handle attachments
 		case *mail.AttachmentHeader:
-			printHeaders(boundaryCode, h.Fields(), writer)
+			writePartHeaders(boundaryCode, h.Fields(), writer)
 
 			b, err := ioutil.ReadAll(p.Body)
 			if err != nil {
@@ -193,7 +183,7 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 			}
 
 			if p.Header.Get("Content-transfer-Encoding") == "base64" {
-				printBase64Encoding(b, writer)
+				writeBase64EncodedPart(b, writer)
 			}
 		}
 	}
@@ -201,9 +191,30 @@ func WriteMessage(writer *bufio.Writer, email Email) error {
 	return nil
 }
 
-func printHeaders(bc string, hf message.HeaderFields, writer *bufio.Writer) {
-	log.Println("BC", bc)
-	writer.WriteString(bc + "\r\n")
+func writeMessageHeaders(fields message.HeaderFields, writer *bufio.Writer) (string, error) {
+
+	var boundaryCode string
+
+	for fields.Next() {
+
+		values := fields.Value()
+		bc := CheckBoundary(fields.Value())
+		if bc != "" {
+			boundaryCode = bc
+		}
+
+		formattedValues := getSubValues(values)
+		writer.WriteString(fmt.Sprintf("%s: %v\r\n", fields.Key(), formattedValues))
+		writer.Flush()
+
+	}
+
+	return boundaryCode, nil
+}
+
+func writePartHeaders(bc string, hf message.HeaderFields, writer *bufio.Writer) {
+
+	writer.WriteString("\r\n" + bc + "\r\n")
 	writer.Flush()
 	for hf.Next() {
 		writer.WriteString(fmt.Sprintf("%s: %s\r\n", hf.Key(), hf.Value()))
@@ -213,10 +224,10 @@ func printHeaders(bc string, hf message.HeaderFields, writer *bufio.Writer) {
 	writer.Flush()
 }
 
-func PrintBody(s string, writer *bufio.Writer) {
+func writeBody(s string, writer *bufio.Writer) {
 	lines := strings.Split(s, "\r\n")
 	for _, line := range lines {
-		if len(line) > 76 {
+		if len(line) > 75 {
 			for _, c := range chunk(line, 75) {
 				writer.WriteString(c + "=\r\n")
 			}
@@ -247,7 +258,7 @@ func chunk(s string, chunkSize int) []string {
 	return chunks
 }
 
-func printBase64Encoding(b []byte, writer *bufio.Writer) {
+func writeBase64EncodedPart(b []byte, writer *bufio.Writer) {
 	sEnc := b64.StdEncoding.EncodeToString(b)
 	chunks := chunk(sEnc, 76)
 	for _, chunk := range chunks {
@@ -266,4 +277,31 @@ func CheckBoundary(s string) string {
 	} else {
 		return ""
 	}
+}
+
+func getSubValues(s string) string {
+
+	matcher := regexp.MustCompile(" from| by| for")
+	indexes := matcher.FindAllStringIndex(s, -1)
+
+	if len(indexes) < 1 {
+		return strings.ReplaceAll(s, ";", ";\r\n        ")
+	}
+
+	runes := []rune(s)
+	crlf := "\r\n       "
+	output := ""
+	last := len(indexes) - 1
+	for i, idx := range indexes {
+		if i == 0 {
+			output = string(runes[0:idx[0]])
+		} else {
+			pi := indexes[i-1]
+			output = output + crlf + string(runes[pi[0]:idx[0]])
+			if i == last {
+				output = output + crlf + string(runes[idx[0]:len(s)])
+			}
+		}
+	}
+	return strings.ReplaceAll(output, ";", ";"+crlf)
 }

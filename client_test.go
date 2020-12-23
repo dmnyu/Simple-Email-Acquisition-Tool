@@ -110,9 +110,7 @@ func TestClient(t *testing.T) {
 			t.Error(err)
 		}
 
-		for msg := range messages {
-			t.Log(msg.SeqNum, msg.Envelope.Subject)
-		}
+		t.Logf("Recieved %d messages", len(messages))
 
 	})
 

@@ -120,21 +120,18 @@ func GetMessage(i uint32, c *client.Client) (Email, error) {
 	return Email{msg, &section}, nil
 }
 
-func GetMessages(from uint32, to uint32, c *client.Client) (chan *imap.Message, error) {
+func GetMessages(from uint32, to uint32, c *client.Client) ([]Email, error) {
 
-	seqset := new(imap.SeqSet)
-	seqset.AddRange(from, to)
-	messages := make(chan *imap.Message, to)
-	done := make(chan error, 1)
-	go func() {
-		done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope}, messages)
-	}()
-
-	if err := <-done; err != nil {
-		return nil, err
+	emails := []Email{}
+	for i := to; i >= from; i-- {
+		email, err := GetMessage(i, c)
+		if err != nil {
+			return emails, err
+		}
+		emails = append(emails, email)
 	}
 
-	return messages, nil
+	return emails, nil
 }
 
 func WriteMessage(writer *bufio.Writer, email Email) error {
